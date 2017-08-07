@@ -5,4 +5,6 @@ models
 terraform.tfstate
 terraform.tfstate.backup
 terraform.tfvars
-.idea
+<<<<<<< HEAD
+.idea/*
+docs/.directory
