@@ -12,6 +12,8 @@ import random
 import collections
 import math
 import time
+import pandas as pd
+from dask.dataframe.methods import index_count
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_dir", help="path to folder containing images")
@@ -38,7 +40,8 @@ parser.add_argument("--scale_size", type=int, default=286, help="scale images to
 parser.add_argument("--flip", dest="flip", action="store_true", help="flip images horizontally")
 parser.add_argument("--no_flip", dest="flip", action="store_false", help="don't flip images horizontally")
 parser.set_defaults(flip=True)
-parser.add_argument("--lr", type=float, default=0.0002, help="initial learning rate for adam")
+# parser.add_argument("--lr", type=float, default=0.0002, help="initial learning rate for adam")
+parser.add_argument("--lr", type=float, default=0.001, help="initial learning rate for adam")
 parser.add_argument("--beta1", type=float, default=0.5, help="momentum term of adam")
 parser.add_argument("--l1_weight", type=float, default=100.0, help="weight on L1 term for generator gradient")
 parser.add_argument("--gan_weight", type=float, default=1.0, help="weight on GAN term for generator gradient")
@@ -150,6 +153,7 @@ def check_image(image):
     shape[-1] = 3
     image.set_shape(shape)
     return image
+
 
 # based on https://github.com/torch/image/blob/9f65c30167b2048ecbe8b7befdc6b2d6d12baee9/generic/image.c
 def rgb_to_lab(srgb):
@@ -294,6 +298,7 @@ def load_examples():
     # synchronize seed for image operations so that we do the same operations to both
     # input and output images
     seed = random.randint(0, 2**31 - 1)
+
     def transform(image):
         r = image
         if a.flip:
@@ -324,6 +329,86 @@ def load_examples():
         inputs=inputs_batch,
         targets=targets_batch,
         count=len(input_paths),
+        steps_per_epoch=steps_per_epoch,
+    )
+
+
+# load washington-rgbd dataset split into train and test in csv files
+def load_examples_from_csv(data_dir=''):
+    data_df = pd.read_csv(data_dir, index_col=False)
+    data_df = data_df.sample(frac=1, random_state=1000)
+
+    # Use half of the data for training GAN, another half for testing
+    # Or 1/4 for training, and 3/4 for testing, those testing images will be used to train the classifier
+    if a.mode == 'train':
+        data_df = data_df.iloc[0: data_df.shape[0]//10]
+    elif a.mode == 'test':
+        data_df = data_df.iloc[data_df.shape[0]//10: data_df.shape[0]]
+
+    rgb_paths = data_df.crop_location.values.tolist()
+    depth_paths = data_df.filled_depthcrop_location.values.tolist()
+
+    decode = tf.image.decode_png
+
+    with tf.name_scope("load_images"):
+        rgb_path_queue = tf.train.string_input_producer(rgb_paths, shuffle=False)
+        depth_path_queue = tf.train.string_input_producer(depth_paths, shuffle=False)
+        reader = tf.WholeFileReader()
+        paths, inputs = reader.read(rgb_path_queue)
+        _, targets = reader.read(depth_path_queue)
+        inputs = decode(inputs, dtype=tf.uint8)
+        targets = decode(targets, dtype=tf.uint16)
+        inputs = tf.image.convert_image_dtype(inputs, dtype=tf.float32)
+        targets = tf.image.convert_image_dtype(targets, dtype=tf.float32)
+
+        assertion_rgb = tf.assert_equal(tf.shape(inputs)[2], 3, message="image does not have 3 channels")
+        assertion_depth = tf.assert_equal(tf.shape(targets)[2], 1, message="depth does not have 1 channels")
+        with tf.control_dependencies([assertion_rgb, assertion_depth]):
+            inputs = tf.identity(inputs)
+            targets = tf.identity(targets)
+
+        inputs.set_shape([None, None, 3])
+        targets.set_shape([None, None, 1])
+
+        inputs = preprocess(inputs)
+        targets = preprocess(targets)
+
+    # synchronize seed for image operations so that we do the same operations to both
+    # input and output images
+    seed = random.randint(0, 2**31 - 1)
+
+    def transform(image):
+        r = image
+        if a.flip:
+            r = tf.image.random_flip_left_right(r, seed=seed)
+
+        # area produces a nice downscaling, but does nearest neighbor for upscaling
+        # assume we're going to be doing downscaling here
+        r = tf.image.resize_images(r, [a.scale_size, a.scale_size], method=tf.image.ResizeMethod.AREA)
+
+        offset = tf.cast(tf.floor(tf.random_uniform([2], 0, a.scale_size - CROP_SIZE + 1, seed=seed)), dtype=tf.int32)
+        if a.scale_size > CROP_SIZE:
+            r = tf.image.crop_to_bounding_box(r, offset[0], offset[1], CROP_SIZE, CROP_SIZE)
+        elif a.scale_size < CROP_SIZE:
+            raise Exception("scale size cannot be less than crop size")
+        return r
+
+    with tf.name_scope("input_images"):
+        input_images = transform(inputs)
+
+    with tf.name_scope("target_images"):
+        target_images = transform(targets)
+
+    paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images],
+                                                              batch_size=a.batch_size,
+                                                              num_threads=1)
+    steps_per_epoch = int(math.ceil(data_df.shape[0] / a.batch_size))
+
+    return Examples(
+        paths=paths_batch,
+        inputs=inputs_batch,
+        targets=targets_batch,
+        count=data_df.shape[0],
         steps_per_epoch=steps_per_epoch,
     )
 
@@ -539,6 +624,9 @@ def append_index(filesets, step=False):
 
 
 def main():
+    train_dir = '/mnt/raid/data/ni/dnn/pduy/rgbd-dataset/eitel-train.csv'
+    test_dir = '/mnt/raid/data/ni/dnn/pduy/rgbd-dataset/eitel-test.csv'
+
     # if tf.__version__ != "1.0.0":
     #     raise Exception("Tensorflow version 1.0.0 required")
 
@@ -630,7 +718,9 @@ def main():
 
         return
 
-    examples = load_examples()
+    # examples = load_examples()
+    examples = load_examples_from_csv(train_dir)
+
     print("examples count = %d" % examples.count)
 
     # inputs and targets are [batch_size, height, width, channels]
@@ -658,23 +748,23 @@ def main():
         targets = deprocess(examples.targets)
         outputs = deprocess(model.outputs)
 
-    def convert(image):
+    def convert(image, d_type):
         if a.aspect_ratio != 1.0:
             # upscale to correct aspect ratio
             size = [CROP_SIZE, int(round(CROP_SIZE * a.aspect_ratio))]
             image = tf.image.resize_images(image, size=size, method=tf.image.ResizeMethod.BICUBIC)
 
-        return tf.image.convert_image_dtype(image, dtype=tf.uint8, saturate=True)
+        return tf.image.convert_image_dtype(image, dtype=d_type, saturate=True)
 
     # reverse any processing on images so they can be written to disk or displayed to user
     with tf.name_scope("convert_inputs"):
-        converted_inputs = convert(inputs)
+        converted_inputs = convert(inputs, tf.uint8)
 
     with tf.name_scope("convert_targets"):
-        converted_targets = convert(targets)
+        converted_targets = convert(targets, tf.uint16)
 
     with tf.name_scope("convert_outputs"):
-        converted_outputs = convert(outputs)
+        converted_outputs = convert(outputs, tf.uint16)
 
     with tf.name_scope("encode_images"):
         display_fetches = {
@@ -685,14 +775,14 @@ def main():
         }
 
     # summaries
-    with tf.name_scope("inputs_summary"):
-        tf.summary.image("inputs", converted_inputs)
-
-    with tf.name_scope("targets_summary"):
-        tf.summary.image("targets", converted_targets)
-
-    with tf.name_scope("outputs_summary"):
-        tf.summary.image("outputs", converted_outputs)
+    # with tf.name_scope("inputs_summary"):
+    #     tf.summary.image("inputs", converted_inputs)
+    #
+    # with tf.name_scope("targets_summary"):
+    #     tf.summary.image("targets", converted_targets)
+    #
+    # with tf.name_scope("outputs_summary"):
+    #     tf.summary.image("outputs", converted_outputs)
 
     with tf.name_scope("predict_real_summary"):
         tf.summary.image("predict_real", tf.image.convert_image_dtype(model.predict_real, dtype=tf.uint8))
@@ -718,8 +808,6 @@ def main():
     logdir = a.output_dir if (a.trace_freq > 0 or a.summary_freq > 0) else None
     sv = tf.train.Supervisor(logdir=logdir, save_summaries_secs=0, saver=None)
     with sv.managed_session() as sess:
-        print("parameter_count =", sess.run(parameter_count))
-
         if a.checkpoint is not None:
             print("loading model from checkpoint")
             checkpoint = tf.train.latest_checkpoint(a.checkpoint)
@@ -794,7 +882,8 @@ def main():
                     train_step = (results["global_step"] - 1) % examples.steps_per_epoch + 1
                     rate = (step + 1) * a.batch_size / (time.time() - start)
                     remaining = (max_steps - step) * a.batch_size / rate
-                    print("progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % (train_epoch, train_step, rate, remaining / 60))
+                    print("progress  epoch %d  step %d  image/sec %0.1f  remaining %dm" % \
+                          (train_epoch, train_step, rate, remaining / 60))
                     print("discrim_loss", results["discrim_loss"])
                     print("gen_loss_GAN", results["gen_loss_GAN"])
                     print("gen_loss_L1", results["gen_loss_L1"])
