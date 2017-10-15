@@ -12,6 +12,7 @@ import random
 import collections
 import math
 import time
+import pandas as pd
 
 parser = argparse.ArgumentParser()
 parser.add_argument("--input_dir", help="path to folder containing images")
@@ -358,6 +359,91 @@ def load_examples():
     )
 
 
+def load_examples_from_csv(pose, data_dir=''):
+    data_df = pd.read_csv(data_dir, index_col=False)
+    data_df = data_df.sample(frac=1, random_state=1000)
+
+    # Use half of the data for training GAN, another half for testing
+    # Or 1/4 for training, and 3/4 for testing, those testing images will be used to train the classifier
+    # if a.mode == 'train':
+    #     data_df = data_df.iloc[0: data_df.shape[0]//10]
+    # elif a.mode == 'test':
+    #     data_df = data_df.iloc[data_df.shape[0]//10: data_df.shape[0]]
+
+    pose_index = [i for i in range(data_df.shape[0]) if pose * 0.8 < data_df.iloc[i].pose < pose * 2][0]
+    new_poses = data_df.iloc[pose_index:data_df.shape[0]].append(data_df[0:pose_index])
+
+    rgb_paths_input = data_df.crop_location.values.tolist()
+    depth_paths_input = data_df.filled_depthcrop_location.values.tolist()
+    rgb_paths_target = new_poses.crop_location.values.tolist()
+    depth_paths_target = new_poses.filled_depthcrop_location.values.tolist()
+
+    #
+    # decode = tf.image.decode_png
+    #
+    # with tf.name_scope("load_images"):
+    #     rgb_path_queue = tf.train.string_input_producer(rgb_paths, shuffle=False)
+    #     depth_path_queue = tf.train.string_input_producer(depth_paths, shuffle=False)
+    #     reader = tf.WholeFileReader()
+    #     paths, inputs = reader.read(rgb_path_queue)
+    #     _, targets = reader.read(depth_path_queue)
+    #     inputs = decode(inputs, dtype=tf.uint8)
+    #     targets = decode(targets, dtype=tf.uint16)
+    #     inputs = tf.image.convert_image_dtype(inputs, dtype=tf.float32)
+    #     targets = tf.image.convert_image_dtype(targets, dtype=tf.float32)
+    #
+    #     assertion_rgb = tf.assert_equal(tf.shape(inputs)[2], 3, message="image does not have 3 channels")
+    #     assertion_depth = tf.assert_equal(tf.shape(targets)[2], 1, message="depth does not have 1 channels")
+    #     with tf.control_dependencies([assertion_rgb, assertion_depth]):
+    #         inputs = tf.identity(inputs)
+    #         targets = tf.identity(targets)
+    #
+    #     inputs.set_shape([None, None, 3])
+    #     targets.set_shape([None, None, 1])
+    #
+    #     inputs = preprocess(inputs)
+    #     targets = preprocess(targets)
+    #
+    # # synchronize seed for image operations so that we do the same operations to both
+    # # input and output images
+    # seed = random.randint(0, 2**31 - 1)
+    #
+    # def transform(image):
+    #     r = image
+    #     if a.flip:
+    #         r = tf.image.random_flip_left_right(r, seed=seed)
+    #
+    #     # area produces a nice downscaling, but does nearest neighbor for upscaling
+    #     # assume we're going to be doing downscaling here
+    #     r = tf.image.resize_images(r, [a.scale_size, a.scale_size], method=tf.image.ResizeMethod.AREA)
+    #
+    #     offset = tf.cast(tf.floor(tf.random_uniform([2], 0, a.scale_size - CROP_SIZE + 1, seed=seed)), dtype=tf.int32)
+    #     if a.scale_size > CROP_SIZE:
+    #         r = tf.image.crop_to_bounding_box(r, offset[0], offset[1], CROP_SIZE, CROP_SIZE)
+    #     elif a.scale_size < CROP_SIZE:
+    #         raise Exception("scale size cannot be less than crop size")
+    #     return r
+    #
+    # with tf.name_scope("input_images"):
+    #     input_images = transform(inputs)
+    #
+    # with tf.name_scope("target_images"):
+    #     target_images = transform(targets)
+    #
+    # paths_batch, inputs_batch, targets_batch = tf.train.batch([paths, input_images, target_images],
+    #                                                           batch_size=a.batch_size,
+    #                                                           num_threads=1)
+    # steps_per_epoch = int(math.ceil(data_df.shape[0] / a.batch_size))
+    #
+    # return Examples(
+    #     paths=paths_batch,
+    #     inputs=inputs_batch,
+    #     targets=targets_batch,
+    #     count=data_df.shape[0],
+    #     steps_per_epoch=steps_per_epoch,
+    # )
+
+
 def create_generator(generator_inputs, generator_outputs_channels):
     layers = []
 
@@ -569,6 +655,8 @@ def main():
     # if tf.__version__ != "1.0.0":
     #     raise Exception("Tensorflow version 1.0.0 required")
 
+    train_dir = '/mnt/raid/data/ni/dnn/pduy/rgbd-dataset/eitel-train.csv'
+
     if a.seed is None:
         a.seed = random.randint(0, 2 ** 31 - 1)
 
@@ -653,7 +741,8 @@ def main():
 
         return
 
-    examples = load_examples()
+    # examples = load_examples()
+    examples = load_examples_from_csv(train_dir)
     print("examples count = %d" % examples.count)
 
     # inputs and targets are [batch_size, height, width, channels]
@@ -831,4 +920,7 @@ def main():
                     break
 
 
-main()
+# main()
+train_dir = '/mnt/raid/data/ni/dnn/pduy/rgbd-dataset/eitel-train.csv'
+load_examples_from_csv(15, train_dir)
+
