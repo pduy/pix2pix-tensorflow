@@ -2,7 +2,12 @@
 tags
 test
 models
+docs/*
+server/*
+tools/*
 terraform.tfstate
 terraform.tfstate.backup
 terraform.tfvars
-.idea
+.idea/*
+docker/*
+docs/.directory
