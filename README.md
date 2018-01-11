@@ -1,3 +1,32 @@
+# Modified Pix2pix to learn from Washington RGB-D
+The main components are mostly the same. But as we have already constructed the meta-data, we also implemented a
+"load_from_csv" method, so there is no need to specify the input folder.
+
+    Depth-GAN: pix2pix.py
+    Pose-GAN: pix2pix_depth.py
+
+Sample command to train or test the Depth-GAN
+```
+python -u pix2pix.py --mode train --output_dir /mnt/raid/data/ni/dnn/pduy/training-depth-16bit/rgbd-depth-10-40ep --max_epochs 10 --display_freq=2000 --batch_size 32 --checkpoint /mnt/raid/data/ni/dnn/pduy/training-depth-16bit/rgbd-depth-10-30ep
+
+   OR
+
+python -u pix2pix.py --mode test --output_dir /mnt/raid/data/ni/dnn/pduy/training-depth-16bit/rgbd-depth-10-40ep-test --checkpoint /mnt/raid/data/ni/dnn/pduy/training-depth-16bit/rgbd-depth-10-40ep
+
+```
+
+Sample command to train or test the Pose-GAN
+```
+python -u pix2pix_depth.py --mode train --output_dir /mnt/raid/data/ni/dnn/pduy/training-pose-16bit/rgbd-50-reg-discrim-instance-noise-one-sided-smooth-label-filtering-categories --max_epochs 20 --display_freq=2000 --batch_size 32 --reg_param 10 --checkpoint /mnt/raid/data/ni/dnn/pduy/training-pose-16bit/rgbd-50-reg-discrim-instance-noise-one-sided-smooth-label-filtering-categories
+
+   OR
+
+python -u pix2pix_depth.py --mode test --output_dir /mnt/raid/data/ni/dnn/pduy/training-pose-16bit/rgbd-50-reg-discrim-instance-noise-one-sided-smooth-label-filtering-categories-test --checkpoint /mnt/raid/data/ni/dnn/pduy/training-pose-16bit/rgbd-50-reg-discrim-instance-noise-one-sided-smooth-label-filtering-categories
+
+
+```
+
+
 # pix2pix-tensorflow
 
 Based on [pix2pix](https://phillipi.github.io/pix2pix/) by Isola et al.
