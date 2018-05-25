@@ -334,16 +334,16 @@ def load_examples():
 
 
 # load washington-rgbd dataset split into train and test in csv files
-def load_examples_from_csv(data_dir=''):
+def load_examples_from_csv(data_dir='', train_proportion=2):
     data_df = pd.read_csv(data_dir, index_col=False)
     data_df = data_df.sample(frac=1, random_state=1000)
 
     # Use half of the data for training GAN, another half for testing
     # Or 1/4 for training, and 3/4 for testing, those testing images will be used to train the classifier
     if a.mode == 'train':
-        data_df = data_df.iloc[0: data_df.shape[0]//10]
+        data_df = data_df.iloc[0: data_df.shape[0]//train_proportion]
     elif a.mode == 'test':
-        data_df = data_df.iloc[data_df.shape[0]//10: data_df.shape[0]]
+        data_df = data_df.iloc[data_df.shape[0]//train_proportion: data_df.shape[0]]
 
     rgb_paths = data_df.crop_location.values.tolist()
     depth_paths = data_df.filled_depthcrop_location.values.tolist()
@@ -719,7 +719,7 @@ def main():
         return
 
     # examples = load_examples()
-    examples = load_examples_from_csv(train_dir)
+    examples = load_examples_from_csv(train_dir, train_proportion=2)
 
     print("examples count = %d" % examples.count)
 
